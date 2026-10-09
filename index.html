@@ -744,7 +744,9 @@ const GATE_ON=!!CFG.API_URL;let UNLOCKED=!GATE_ON;
 (function(){
   if(!GATE_ON)return;
   const gate=$('#gate'),msg=$('#gMsg'),cta=document.querySelector('.cta');
-  const api=(a,d)=>fetch(CFG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({a,zone:ZONE},d||{}))}).then(r=>r.text()).then(x=>{try{return JSON.parse(x)}catch(e){console.warn('JC menu: service returned a non-JSON reply (check that the deployment access is "Anyone" and config.js holds URL-1):',x.slice(0,200));throw new Error('notjson')}});
+  const post=(a,d,rid)=>fetch(CFG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({a,zone:ZONE,rid},d||{}))}).then(r=>r.text()).then(x=>{try{return JSON.parse(x)}catch(e){console.warn('JC menu: the service returned a non-JSON reply (deployment access must be "Anyone" and config.js must hold URL-1):',x.slice(0,200));throw new Error('notjson')}});
+  const jsonp=(a,d,rid)=>new Promise((res,rej)=>{const cb='jc'+Math.random().toString(36).slice(2),s=document.createElement('script');let fin=false;const end=()=>{fin=true;clearTimeout(tm);try{delete window[cb]}catch(e){window[cb]=undefined}s.remove()};const tm=setTimeout(()=>{if(!fin){end();rej(new Error('net'))}},10000);window[cb]=r=>{end();res(r)};s.onerror=()=>{if(!fin){end();rej(new Error('net'))}};s.src=CFG.API_URL+(CFG.API_URL.indexOf('?')<0?'?':'&')+'callback='+cb+'&d='+encodeURIComponent(JSON.stringify(Object.assign({a,zone:ZONE,rid},d||{})));document.head.appendChild(s)});
+  const api=(a,d)=>{const rid=Math.random().toString(36).slice(2)+Date.now().toString(36);return post(a,d,rid).catch(e=>{if(e&&e.message==='notjson')throw e;console.warn('JC menu: normal call failed, trying the backup method',e);return jsonp(a,d,rid)})};
   const netMsg=e=>e&&e.message==='notjson'?'The registration service is not set up correctly yet. Please tell our staff.':'We could not reach the registration service. Please check your internet connection and try again.';
   const say=(t,ok)=>{msg.textContent=t||'';msg.classList.toggle('ok',!!ok)};
   const ERR={rate:'Too many attempts. Please try again after some time.',otp:'That OTP is not correct. Please check and try again.',exp:'The OTP has expired. Please request a new one.',mobile:'Please enter a valid 10-digit Indian mobile number.',name:'Please enter your full name.',sms:'We could not send the OTP right now. Please try again shortly.',auth:'Please verify your number again.',busy:'Please wait a few seconds before requesting another OTP.',fake:'Please enter your genuine mobile number.',setup:'The registration service is not ready yet. Please tell our staff.',bad:'Something went wrong. Please try again.'};
@@ -768,6 +770,20 @@ const GATE_ON=!!CFG.API_URL;let UNLOCKED=!GATE_ON;
   if(SESS&&SESS.t){unlock();api('visit',{t:SESS.t}).then(r=>{if(r&&r.ok){if(r.name&&r.name!==SESS.name){SESS.name=r.name;greet()}}else if(r&&r.err==='auth'){try{localStorage.removeItem('jc_sess')}catch(e){};SESS=null;lock()}}).catch(()=>{})}
   else lock();
 })();
+
+/* ---- owner self-test: open the menu address with ?debug=1 ---- */
+if(QP.get('debug')==='1'){
+  const box=document.createElement('div');box.style.cssText='margin:10px auto;max-width:390px;padding:12px;border:1px dashed #7fd8cf;border-radius:12px;font-size:12px;line-height:1.55;text-align:left;background:rgba(0,0,0,.6);color:#e9fffb;width:100%';
+  const u=CFG.API_URL||'',ok=/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(u);
+  box.innerHTML='<b style="color:#7fd8cf">Owner self-test</b><br>Address in config.js: '+(u?('<code>'+u.slice(0,40)+'…'+u.slice(-12)+'</code>'):'<b style="color:#ff9b73">EMPTY</b>')+'<br>'+(ok?'✔ Address shape is correct':'✘ It must look like https://script.google.com/macros/s/…/exec (nothing after /exec, no ?page=admin, and it must be URL-1 “Public menu API”)')+'<br><button id="dbgOpen" style="margin:6px 6px 0 0;padding:6px 10px;border-radius:8px">Open check page</button><button id="dbgRun" style="margin-top:6px;padding:6px 10px;border-radius:8px">Run test</button><div id="dbgOut" style="margin-top:8px"></div>';
+  $('#home').insertBefore(box,$('#home').children[1]);
+  $('#dbgOpen').onclick=()=>window.open(u+(u.indexOf('?')<0?'?':'&')+'check=1','_blank');
+  $('#dbgRun').onclick=()=>{const o=$('#dbgOut');o.textContent='Testing…';
+    const rid='dbg'+Date.now();
+    const p1=fetch(u,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({a:'ping',rid})}).then(r=>r.text()).then(x=>{JSON.parse(x);return '✔ Normal call works'}).catch(e=>'✘ Normal call failed ('+(e&&e.message==='Failed to fetch'?'blocked/unreachable':e.message)+')');
+    const p2=new Promise(res=>{const cb='jd'+Math.random().toString(36).slice(2),s=document.createElement('script');const tm=setTimeout(()=>{s.remove();res('✘ Backup call failed (no valid answer)')},8000);window[cb]=r=>{clearTimeout(tm);s.remove();res('✔ Backup call works')};s.onerror=()=>{clearTimeout(tm);res('✘ Backup call failed (blocked)')};s.src=u+(u.indexOf('?')<0?'?':'&')+'callback='+cb+'&d='+encodeURIComponent(JSON.stringify({a:'ping',rid}));document.head.appendChild(s)});
+    Promise.all([p1,p2]).then(r=>{o.innerHTML=r.join('<br>')+'<br>'+((r[0][0]==='✔'||r[1][0]==='✔')?'<b style="color:#9be58f">The service is reachable. Registration should work.</b>':'<b style="color:#ff9b73">Not reachable. Open “Open check page” in a private window: if it asks you to sign in, set the first deployment to “Who has access: Anyone” and deploy a New version.</b>')})};
+}
 layout();
 </script>
 </body>
